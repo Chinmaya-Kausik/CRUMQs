@@ -80,19 +80,34 @@ If you want to skip re-running NeuCLIR and already-done TREC RAG requests,
 copy `generated_data/` from the local machine. The parallel script auto-skips
 requests that have 5+ .pkl files in `_data_multihop/`.
 
-### 6. Run TREC RAG
+### 6. Verify the pipeline with tests
+
+Before running the full pipeline, sanity-check the crawler and science pipeline:
 
 ```bash
-# Edit run_trecrag_parallel.sh to set NUM_WORKERS (2 recommended for RunPod)
-# Also update the API keys in the script
+PYTHONPATH=. python3 test_crawlers.py
+```
 
+This runs 5 isolated tests (URL search, news crawler, preprint fallback, science crawl
+non-bio, science crawl bio). Takes ~5-10 minutes. All should PASS.
+
+For a quick science-only check:
+
+```bash
+PYTHONPATH=. python3 test_science_crawl.py
+```
+
+### 7. Run TREC RAG
+
+```bash
+# Run in background with 2 parallel workers (configurable in the script)
 bash run_trecrag_parallel.sh > generated_data/run_trecrag_parallel.log 2>&1 &
 
 # Monitor:
 tail -f generated_data/run_trecrag_parallel.log
 ```
 
-### 7. Post-process when done
+### 8. Post-process when done
 
 ```bash
 python src/crumqs_generation/postprocess_metadata.py
