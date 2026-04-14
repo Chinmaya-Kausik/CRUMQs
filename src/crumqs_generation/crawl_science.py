@@ -217,20 +217,30 @@ def crawl_scientific_articles(
 
         os.makedirs(index_dir, exist_ok=True)
         try:
+            # Split topic into individual keywords for AND search
+            # (XRXivQuery does substring match per keyword, AND across list)
+            topic_str = topic[0] if isinstance(topic, list) else topic
+            keywords = [w for w in topic_str.replace('-', ' ').split() if len(w) > 3]
+            if not keywords:
+                keywords = [topic_str]  # fallback
+
             querier = XRXivQuery(dump_path)
             querier.search_keywords(
-                topic,
+                keywords,
                 output_filepath=index_path,
                 fields=fields,
             )
-            # Cap xrxiv results to avoid downloading thousands of PDFs
-            if os.path.exists(index_path):
+            # Cap xrxiv results (abstracts), but allow more than 1 so we get real coverage
+            xrxiv_abstract_cap = 50
+            n_papers = 0
+            if os.path.exists(index_path) and os.path.getsize(index_path) > 10:
                 df = pd.read_json(index_path, lines=True)
-                if len(df) > articles_per_source:
-                    df = df.head(articles_per_source)
-                    df.to_json(index_path, orient='records', lines=True)
-                    log(colored(f"Capped {source_name} results from {len(pd.read_json(index_path, lines=True))} to {articles_per_source}", "yellow"), logging_file)
-            log(colored(f"Finished crawling {source_name} articles for topic: {topic[0]}! ({len(df) if os.path.exists(index_path) else 0} papers)", "magenta"), logging_file)
+                n_papers = len(df)
+                if n_papers > xrxiv_abstract_cap:
+                    df.head(xrxiv_abstract_cap).to_json(index_path, orient='records', lines=True)
+                    log(colored(f"Capped {source_name} from {n_papers} to {xrxiv_abstract_cap}", "yellow"), logging_file)
+                    n_papers = xrxiv_abstract_cap
+            log(colored(f"Finished crawling {source_name} for topic: {topic_str}! ({n_papers} papers)", "magenta"), logging_file)
         except Exception as e:
             log(colored(f"Error when getting {source_name} articles: {e}", "red"), logging_file)
 
@@ -249,16 +259,17 @@ def crawl_scientific_articles(
         medrxiv_index_path,
     ]
 
-    # First pass: try direct PDF download via DOI (capped to articles_per_source per index)
+    # First pass: try direct PDF download via DOI
+    # Cap PDF download attempts to articles_per_source (PDF downloads are expensive / often blocked)
+    pdf_download_cap = articles_per_source
     for dump_path in all_index_paths:
-        if not os.path.exists(dump_path):
+        if not os.path.exists(dump_path) or os.path.getsize(dump_path) < 10:
             continue
         try:
-            # Cap the index before downloading to avoid processing thousands of papers
             df = pd.read_json(dump_path, lines=True)
-            if len(df) > articles_per_source:
-                capped_path = dump_path + '.capped.jsonl'
-                df.head(articles_per_source).to_json(capped_path, orient='records', lines=True)
+            if len(df) > pdf_download_cap:
+                capped_path = dump_path + '.pdfcap.jsonl'
+                df.head(pdf_download_cap).to_json(capped_path, orient='records', lines=True)
                 save_pdf_from_dump(
                     dump_path=capped_path,
                     pdf_path=pdf_path,
@@ -309,21 +320,31 @@ def crawl_scientific_articles(
                 'doc_id': filename.replace(".pdf", ""),
             })
             count += 1
-    if os.path.exists(biorxiv_index_path):
+    # Append abstracts from all xrxiv sources (biorxiv, medrxiv, chemrxiv)
+    xrxiv_abstract_count = 0
+    for source_name, index_path in [
+        ("biorxiv", biorxiv_index_path),
+        ("medrxiv", medrxiv_index_path),
+        ("chemrxiv", chemrxiv_index_path),
+    ]:
+        if not os.path.exists(index_path) or os.path.getsize(index_path) < 10:
+            continue
         try:
-            biorxiv_papers = pd.read_json(biorxiv_index_path, lines=True)['abstract'].to_list()
-            biorxiv_dois = pd.read_json(biorxiv_index_path, lines=True)['doi'].to_list()
+            df = pd.read_json(index_path, lines=True)
+            if 'abstract' not in df.columns or 'doi' not in df.columns:
+                continue
+            papers = df['abstract'].to_list()
+            dois = df['doi'].to_list()
             articles += [
-                {
-                    "text":  x,
-                    'source': 'science',
-                    'doc_id': doi,
-                }
-                for x, doi in zip(biorxiv_papers, biorxiv_dois)
+                {"text": x, "source": "science", "doc_id": doi}
+                for x, doi in zip(papers, dois)
+                if x and len(str(x)) > 100
             ]
-            count += len(biorxiv_papers)
+            xrxiv_abstract_count += len(papers)
+            count += len(papers)
         except Exception as e:
-            log(colored("Didn't add BiorXiv abstracts as no relevant papers were found.", "yellow"), logging_file)
+            log(colored(f"Didn't add {source_name} abstracts: {e}", "yellow"), logging_file)
+    log(colored(f"Appended {xrxiv_abstract_count} xrxiv abstracts for topic: {topic[0]}!", "magenta"), logging_file)
     log(colored(f"Finished converting PDFs to JSONs for topic: {topic[0]}!", "magenta"), logging_file)
 
     # Return List of Json's of Articles
