@@ -1153,15 +1153,15 @@ class DatasetCreationPipeline:
                                 'rr_id': current_rr_id,
                                 "generation_template": f"{template_name}",
                                 "generation_kwargs": kwarg,
-                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict],
-                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict],
+                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict.values()],
+                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict.values()],
                             }
                             for kwarg in all_kwargs
                         ])
-                    else: 
+                    else:
                         try:
                             prompts.append(PROMPT_REGISTRY[template_name].format(context=input_context))
-                        except: 
+                        except:
                             import ipdb; ipdb.set_trace()
                         contexts.append(input_context)
                         internal_contexts.append(internal_context)
@@ -1170,13 +1170,13 @@ class DatasetCreationPipeline:
                                 'rr_id': current_rr_id,
                                 "generation_template": f"{template_name}",
                                 "generation_kwargs": {},
-                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict],
-                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict],
+                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict.values()],
+                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict.values()],
                             }
                         )
-                else: 
+                else:
                     template_name = random.choice(CLAIM_PROMPTS)
-                    if template_name=="c1": 
+                    if template_name=="c1":
                         all_kwargs = [
                             {'question_type': qt, 'question_format': qf, 'answer_length': al}
                             for qt, qf, al in product(question_types, question_format, answer_lengths)
@@ -1196,12 +1196,12 @@ class DatasetCreationPipeline:
                                 'rr_id': current_rr_id,
                                 "generation_template": f"{template_name}",
                                 "generation_kwargs": kwarg,
-                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict],
-                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict],
+                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict.values()],
+                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict.values()],
                             }
                             for kwarg in all_kwargs
                         ])
-                    elif template_name=="c4": 
+                    elif template_name=="c4":
                         kwargs = {
                             'question_type': random.choice(question_types),
                         }
@@ -1213,8 +1213,8 @@ class DatasetCreationPipeline:
                                 'rr_id': current_rr_id,
                                 "generation_template": f"{template_name}",
                                 "generation_kwargs": {},
-                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict],
-                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict],
+                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict.values()],
+                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict.values()],
                             }
                         )
                     else:
@@ -1226,8 +1226,8 @@ class DatasetCreationPipeline:
                                 'rr_id': current_rr_id,
                                 "generation_template": f"{template_name}",
                                 "generation_kwargs": {},
-                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict],
-                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict],
+                                'sources': [getattr(node, 'metadata', {}).get('source', '') for node in node_dict.values()],
+                                'doc_ids': [getattr(node, 'metadata', {}).get('doc_id', '') for node in node_dict.values()],
                             }
                         )
             orig_prompt_ct = len(prompts)

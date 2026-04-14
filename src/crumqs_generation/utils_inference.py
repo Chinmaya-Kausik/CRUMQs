@@ -12,15 +12,41 @@ from tqdm.asyncio import tqdm
 
 from langchain_core.language_models import BaseChatModel
 from langchain.schema import SystemMessage, HumanMessage
-from langchain_together import ChatTogether
-from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
-from langchain_huggingface import (
-    ChatHuggingFace,
-    HuggingFaceEndpoint,
-    HuggingFacePipeline,
-)
-from transformers import AutoTokenizer
+
+# Lazy imports for providers we may not use
+ChatTogether = None
+ChatAnthropic = None
+ChatHuggingFace = None
+HuggingFaceEndpoint = None
+HuggingFacePipeline = None
+AutoTokenizer = None
+
+def _ensure_together():
+    global ChatTogether
+    if ChatTogether is None:
+        from langchain_together import ChatTogether as _CT
+        ChatTogether = _CT
+
+def _ensure_anthropic():
+    global ChatAnthropic
+    if ChatAnthropic is None:
+        from langchain_anthropic import ChatAnthropic as _CA
+        ChatAnthropic = _CA
+
+def _ensure_huggingface():
+    global ChatHuggingFace, HuggingFaceEndpoint, HuggingFacePipeline, AutoTokenizer
+    if ChatHuggingFace is None:
+        from langchain_huggingface import (
+            ChatHuggingFace as _CHF,
+            HuggingFaceEndpoint as _HFE,
+            HuggingFacePipeline as _HFP,
+        )
+        from transformers import AutoTokenizer as _AT
+        ChatHuggingFace = _CHF
+        HuggingFaceEndpoint = _HFE
+        HuggingFacePipeline = _HFP
+        AutoTokenizer = _AT
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +159,7 @@ def load_model(
     
     # Load Anthropic model
     elif provider == ModelProvider.ANTHROPIC:
+        _ensure_anthropic()
         client = ChatAnthropic(
             model_name=model_name,
             temperature=temperature,
@@ -143,6 +170,7 @@ def load_model(
     
     # Load TogetherAI model
     elif provider == ModelProvider.TOGETHER:
+        _ensure_together()
         client = ChatTogether(
             model=model_name,
             temperature=temperature,
@@ -153,6 +181,7 @@ def load_model(
     
     # Load HF model (HF API)
     elif provider == ModelProvider.HUGGINGFACE:
+        _ensure_huggingface()
         llm = HuggingFaceEndpoint(
             repo_id=model_name,
             task="text-generation",
@@ -165,6 +194,7 @@ def load_model(
     
     # Load HF model (local)
     elif provider == ModelProvider.HUGGINGFACE_LOCAL:
+        _ensure_huggingface()
         llm = HuggingFacePipeline.from_model_id(
             model_id=model_name,
             task="text-generation",

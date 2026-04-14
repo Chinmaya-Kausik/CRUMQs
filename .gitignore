@@ -1,0 +1,21 @@
+# Data files
+_database/
+_benchmark_database/
+_database.tar
+_benchmark_database.tar
+generated_data/
+
+# Environment
+unans_env/
+crumqs_env/
+*.pyc
+__pycache__/
+
+# Index files
+_rag_index/
+_ood_articles/
+
+# IDE
+.idea/
+.vscode/
+*.swp

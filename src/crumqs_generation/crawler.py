@@ -22,9 +22,25 @@ from src.crumqs_generation.utils_deduplication import log
 
 logging.basicConfig(level=logging.INFO)
 
+def _trafilatura_config():
+    """Trafilatura config with aggressive timeouts for fast crawling."""
+    import configparser
+    from trafilatura.settings import DEFAULT_CONFIG
+    config = configparser.ConfigParser()
+    config.read_dict({s: dict(DEFAULT_CONFIG[s]) for s in DEFAULT_CONFIG.sections()})
+    config['DEFAULT'] = dict(DEFAULT_CONFIG['DEFAULT'])
+    config.set('DEFAULT', 'download_timeout', '3')
+    config.set('DEFAULT', 'sleep_time', '0')
+    config.set('DEFAULT', 'extraction_timeout', '3')
+    config.set('DEFAULT', 'max_redirects', '1')
+    return config
+
+_TRAF_CONFIG = _trafilatura_config()
+
+
 def download_html_trafilatura(url: str):
     try:
-        return fetch_url(url)
+        return fetch_url(url, config=_TRAF_CONFIG)
     except Exception as e:
         return None
 
@@ -148,65 +164,71 @@ def extract_articles_trafilatura(urls: list):
     return articles
 
 
-def extract_articles(urls: list):
-    htmls = multithread_download_html(urls, download_html_recursive_url_loader)
-    print(f"Downloaded {len(htmls)} htmls")
+def _fetch_and_extract_single(url):
+    """Fetch a single URL and extract article text. Returns dict or None."""
+    try:
+        html = fetch_url(url)
+        if not html:
+            return None
+        article = Article('', language='en', keep_article_html=True)
+        article.download(input_html=html)
+        article.parse()
+        if len(article.text) < 100:
+            return None
+        return {'title': article.title, 'text': article.text, 'source': 'web_search', 'doc_id': url}
+    except Exception:
+        return None
 
-    articles = multi_thread_extract_text(htmls, extract_text_newspaper)
-    print(f"Extracted {len(articles)} articles")
 
+def extract_articles(urls: list, target_count: int = 10):
+    """Extract articles in parallel, stopping early once target_count is reached."""
+    from concurrent.futures import as_completed
+    articles = []
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(_fetch_and_extract_single, url): url for url in urls}
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                articles.append(result)
+                if len(articles) >= target_count:
+                    # Cancel remaining futures
+                    for f in futures:
+                        f.cancel()
+                    break
+    print(f"Extracted {len(articles)}/{len(urls)} articles")
     return articles
 
 
-def safe_extract_articles(redirect_urls, timeout=30):
-    def target(queue, urls):
-        try:
-            result = extract_articles(urls)
-            queue.put(result)
-        except Exception as e:
-            traceback.print_exc()
-            queue.put([])
-
-    queue = multiprocessing.Queue()
-    p = multiprocessing.Process(target=target, args=(queue, redirect_urls))
-    p.start()
-    p.join(timeout)
-
-    if p.is_alive():
-        print("extract_articles timed out, returning empty list.")
-        p.terminate()
-        p.join()
-        return []
-
-    try:
-        return queue.get_nowait()
-    except:
-        return []
+def safe_extract_articles(urls, timeout=None):
+    """Direct extraction — no subprocess needed."""
+    return extract_articles(urls)
     
 
 def crawl_gnews_articles(
-        keywords: list, 
+        keywords: list,
         save_dir: str,      # ".../_ood_articles"
-        articles_per_feed: int = 50, 
-        max_crawled_articles: int = 2500, 
+        articles_per_feed: int = 50,
+        max_crawled_articles: int = 2500,
         timedelta_days: int = 1,
     ):
     urls = get_google_news_article(keywords[0], articles_per_feed)
     logging_file = save_dir.replace("_ood_articles", "") + "logging.txt"
 
     log(f"Total Article URLs: {len(urls)}", logging_file)
-    # need to redirect to get the actual article url
-    redirect_urls = get_redirected_urls(urls)
-    redirect_urls = list(set(redirect_urls))
-    log(f"Unique Redirected URLs: {len(redirect_urls)}", logging_file)
-    # articles = extract_articles(redirect_urls)
-    articles = safe_extract_articles(redirect_urls)
+    # URLs from ddgs/gnews are already direct; only resolve news.google.com URLs
+    google_urls = [u for u in urls if 'news.google.com' in u]
+    direct_urls = [u for u in urls if 'news.google.com' not in u]
+    if google_urls:
+        resolved = get_redirected_urls(google_urls)
+        direct_urls.extend(resolved)
+    unique_urls = list(set(direct_urls))
+    log(f"Unique Article URLs: {len(unique_urls)}", logging_file)
+    articles = safe_extract_articles(unique_urls)
     articles = [x for x in articles if "Bad Request" not in x['title'] and "Bad Request" not in x['text'] and "Attention Required" not in x['title']]
-    # for article in articles: article['topic'] = keywords[0]
-    if len(redirect_urls)==0:
+    if len(unique_urls) == 0:
         log("Crawler success rate: 0.00", logging_file)
         return []
-    success_rate = len(articles) / len(redirect_urls)
+    success_rate = len(articles) / len(unique_urls)
     log(f"Crawler success rate: {success_rate:.2f}", logging_file)
     return articles
 
@@ -329,38 +351,101 @@ def test_gnews_crawl():
     print(f"Time taken: {time.time() - start:.2f} seconds")
 
 
-def get_google_news_article(search_string, test_size):
-    articles = []
-    count = 0
-    for size in range(0, test_size//10+10):
+_SKIP_DOMAINS = regex.compile(
+    r'amazon\.com|facebook\.com|twitter\.com|youtube\.com|wikipedia\.org'
+)
 
-        # Search past week & sort by date
-        # url = f'https://www.google.com/search?q={search_string}&safe=active&tbs=qdr:w,sdb:1&tbm=nws&source=lnt&dpr=1&start={size}'
 
-        # Search past year & sort by relevance
-        url = f'https://www.google.com/search?q={search_string}&safe=active&tbs=qdr:y,sdb:0&tbm=nws&source=lnt&dpr=1&start={size}'
-        response = requests.get(url)
-        raw_html = BeautifulSoup(response.text, "lxml")
-        main_tag = raw_html.find('div', {'id': 'main'})
+def _urls_from_ddgs(search_string, num_results):
+    """Search via DuckDuckGo (ddgs package)."""
+    try:
+        from ddgs import DDGS
+        results = DDGS().text(search_string, max_results=num_results)
+        urls = [r['href'] for r in results if r.get('href') and not _SKIP_DOMAINS.search(r['href'])]
+        logging.info(f"DDGS search for '{search_string}': {len(results)} results, {len(urls)} usable URLs")
+        return urls
+    except Exception as e:
+        logging.warning(f"DDGS search failed for '{search_string}': {e}")
+        return []
 
-        for div_tag in main_tag.find_all('div', {'class': regex.compile('xpd')}):
-            for a_tag in div_tag.find_all('a', href=True):
-                if not a_tag.get('href').startswith('/search?'):
-                    none_articles = bool(
-                        regex.search('amazon.com|facebook.com|twitter.com|youtube.com|wikipedia.org', a_tag['href']))
-                    if none_articles is False:
-                        if a_tag.get('href').startswith('/url?q='):
-                            find_article = regex.search('(.*)(&sa=)', a_tag.get('href'))
-                            article = find_article.group(1).replace('/url?q=', '')
-                            if article.startswith('https://'):
-                                articles.append(article)
-                                count += 1
-                if count >= test_size:
-                    break
-            if count >= test_size:
+
+def _urls_from_gnews(search_string, num_results):
+    """Search via Google News RSS (gnews + googlenewsdecoder)."""
+    try:
+        from gnews import GNews
+        from googlenewsdecoder import new_decoderv1
+
+        gn = GNews(language='en', country='US', max_results=min(num_results * 2, 100))
+        results = gn.get_news(search_string)
+
+        urls = []
+        for r in results:
+            raw_url = r.get('url', '')
+            if not raw_url:
+                continue
+            try:
+                decoded = new_decoderv1(raw_url)
+                if decoded.get('status') and decoded.get('decoded_url'):
+                    url = decoded['decoded_url']
+                    if not _SKIP_DOMAINS.search(url):
+                        urls.append(url)
+            except Exception:
+                try:
+                    redirect = requests.head(raw_url, allow_redirects=True, timeout=5).url
+                    if redirect.startswith('https://') and 'news.google.com' not in redirect:
+                        urls.append(redirect)
+                except Exception:
+                    pass
+            if len(urls) >= num_results:
                 break
+        logging.info(f"GNews search for '{search_string}': {len(results)} results, {len(urls)} decoded URLs")
+        return urls
+    except Exception as e:
+        logging.warning(f"GNews search failed for '{search_string}': {e}")
+        return []
 
-    return articles
+
+def _urls_from_google_news_rss(search_string, num_results):
+    """Search via raw Google News RSS feed (no library needed)."""
+    try:
+        keyword = search_string.replace(" ", "%20")
+        rss_url = f'https://news.google.com/rss/search?q={keyword}&hl=en-US&gl=US&ceid=US:en'
+        feed = feedparser.parse(rss_url)
+        urls = []
+        for entry in feed.entries[:num_results * 2]:
+            raw_url = entry.get('link', '')
+            if not raw_url:
+                continue
+            try:
+                redirect = requests.head(raw_url, allow_redirects=True, timeout=5).url
+                if redirect.startswith('https://') and 'news.google.com' not in redirect and not _SKIP_DOMAINS.search(redirect):
+                    urls.append(redirect)
+            except Exception:
+                pass
+            if len(urls) >= num_results:
+                break
+        logging.info(f"Google News RSS for '{search_string}': {len(feed.entries)} entries, {len(urls)} resolved URLs")
+        return urls
+    except Exception as e:
+        logging.warning(f"Google News RSS failed for '{search_string}': {e}")
+        return []
+
+
+def get_google_news_article(search_string, test_size):
+    """Get article URLs from multiple search backends, deduped. Targets ~20 URLs."""
+    target = max(test_size, 10)
+    seen = set()
+    urls = []
+
+    for source_fn in [_urls_from_ddgs, _urls_from_gnews]:
+        if len(urls) >= target:
+            break
+        for url in source_fn(search_string, target):
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+    logging.info(f"Combined search for '{search_string}': {len(urls)} unique URLs")
+    return urls
 
 if __name__ == '__main__':
     test_gnews_crawl()
