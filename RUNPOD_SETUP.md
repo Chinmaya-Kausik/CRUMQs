@@ -46,23 +46,23 @@ pip install langchain-core==0.3.12 langchain-openai==0.2.2 openai==1.51.2
 
 ### 3. Download databases
 
+All database files (NeuCLIR, TREC RAG, xrxiv dumps) are bundled in a GitHub release:
+
 ```bash
-# NeuCLIR test database (if running NeuCLIR)
-# This should be in the repo already at _database/neuclir_test/
-
-# TREC RAG database — needs the full_articles.json and request file
-# These should be at:
-#   _database/trecrag2025/full_articles.json (105K articles, ~83MB)
-#   _database/test_requests_trecrag2025.jsonl
-
-# Download xrxiv dumps for science pipeline (~30 min)
-python -c "
-from paperscraper.get_dumps import biorxiv, medrxiv, chemrxiv
-biorxiv(start_date='2024-01-01', save_path='./_database/biorxiv.jsonl')
-medrxiv(start_date='2024-01-01', save_path='./_database/medrxiv.jsonl')
-chemrxiv(start_date='2024-01-01', save_path='./_database/chemrxiv.jsonl')
-"
+# Download and extract database tarball (148MB compressed, 477MB extracted)
+gh release download v0.1-data --repo Chinmaya-Kausik/CRUMQs --pattern '*.tar.gz'
+tar xzf crumqs_database.tar.gz
+rm crumqs_database.tar.gz
 ```
+
+This gives you:
+- `_database/neuclir_test/` — NeuCLIR test documents
+- `_database/trecrag2025/` — TREC RAG 2025 documents (105K articles)
+- `_database/test_requests_neuclir.jsonl` — NeuCLIR request definitions
+- `_database/test_requests_trecrag2025.jsonl` — TREC RAG request definitions
+- `_database/biorxiv.jsonl` — biorxiv dump (276MB)
+- `_database/medrxiv.jsonl` — medrxiv dump (90MB)
+- `_database/chemrxiv.jsonl` — chemrxiv dump (12MB)
 
 ### 4. Set environment variables
 
