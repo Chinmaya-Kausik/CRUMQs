@@ -8,6 +8,8 @@ generated_data/
 # Environment
 unans_env/
 crumqs_env/
+env.sh
+.env
 *.pyc
 __pycache__/
 
